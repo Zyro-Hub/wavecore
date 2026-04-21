@@ -1,0 +1,49 @@
+[build-system]
+requires = ["setuptools>=64", "cffi>=1.15.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "wavcore"
+version = "1.0.0"
+description = "Ultra-fast lossless voice codec — real-time recording, VTXT text serialization, and bit-perfect reconstruction with a C engine."
+readme = "README.md"
+license = "MIT"
+requires-python = ">=3.9"
+keywords = ["audio", "codec", "voice", "recording", "lossless", "real-time"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: C",
+    "Topic :: Multimedia :: Sound/Audio",
+    "Topic :: Multimedia :: Sound/Audio :: Capture/Recording",
+    "Topic :: Multimedia :: Sound/Audio :: Conversion",
+]
+
+dependencies = [
+    "numpy>=1.21.0",
+    "sounddevice>=0.4.5",
+    "cffi>=1.15.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "matplotlib>=3.5.0",   # for diff_report analysis
+    "scipy>=1.7.0",        # for advanced spectrum analysis
+]
+
+[project.urls]
+Homepage    = "https://github.com/wavcore/wavcore"
+Source      = "https://github.com/wavcore/wavcore"
+Issues      = "https://github.com/wavcore/wavcore/issues"
+
+[tool.setuptools.packages.find]
+where   = ["."]
+include = ["wavcore*"]
+
+[tool.setuptools.package-data]
+"wavcore._codec" = ["codec_core.c", "*.pyd", "*.so", "*.dylib"]

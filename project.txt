@@ -1,0 +1,267 @@
+# Voice Research Project Document
+## Ultra-Fast Free Real-Time Voice System
+## No AI Models Used
+
+### 1) Project Goal
+Build a fully free, fast, experimental voice system that can:
+- capture voice with maximum detail
+- store raw audio data
+- transmit it with low delay
+- reconstruct it as accurately as possible
+- support future expansion into browser + Python client
+
+This project is focused on:
+- speed
+- simplicity
+- free tools
+- research value
+- high audio fidelity
+
+---
+
+### 2) Core Idea
+We do not convert voice into text.
+We do not use AI models.
+
+Instead, we work with:
+- raw waveform audio
+- precise sampling
+- packet-based transmission
+- direct decoding back to sound
+
+This is the cleanest way to study:
+- tone
+- vibration
+- timing
+- data size
+- latency
+- reconstruction quality
+
+---
+
+### 3) Best Free Technology Stack
+
+#### Audio
+- Python `sounddevice`
+- Python `numpy`
+- Python `wave` or `soundfile`
+
+#### Networking
+- Python `websockets`
+- Python `asyncio`
+- Later: WebRTC if browser support is needed
+
+#### Server
+- Python `aiohttp` or `FastAPI`
+- WebSocket signaling
+- Room management
+- User tracking
+
+#### Frontend later
+- HTML
+- CSS
+- JavaScript
+- Web Audio API
+- WebRTC API
+
+#### Storage
+- Plain files
+- `.wav`
+- `.json`
+- `.bin`
+
+No paid services required.
+
+---
+
+### 4) Recommended Project Workflow
+
+## Phase 1: Research and Testing
+Goal:
+- capture clean voice
+- inspect raw samples
+- understand waveform behavior
+
+Tasks:
+1. Record microphone input
+2. Save raw waveform
+3. Plot waveform
+4. Play it back
+5. Measure quality and delay
+
+Output:
+- raw audio files
+- waveform graphs
+- sample data logs
+
+---
+
+## Phase 2: Raw Data Encoding
+Goal:
+- convert audio into compact binary data without AI
+
+Tasks:
+1. Split audio into tiny frames
+2. Store each frame as numeric samples
+3. Add timestamp for each frame
+4. Add frame ID
+5. Add checksum for safety
+
+Frame structure example:
+- frame_id
+- timestamp
+- sample_rate
+- channels
+- bit_depth
+- raw samples
+- checksum
+
+This lets the project reconstruct audio exactly from stored data.
+
+---
+
+## Phase 3: Local Transmission Test
+Goal:
+- send raw audio data from one device to another locally
+
+Tasks:
+1. Start sender
+2. Capture mic in real time
+3. Package frames
+4. Send frames over WebSocket
+5. Receive frames
+6. Decode frames
+7. Play sound immediately
+
+Important:
+- Keep frames very small
+- Avoid waiting too long before sending
+- Do not buffer too much
+- Use asynchronous code
+
+---
+
+## Phase 4: Room-Based Voice System
+Goal:
+- support multiple users in one room
+
+Tasks:
+1. Create room ID
+2. Join room
+3. Stream frames only to room members
+4. Handle user join/leave
+5. Maintain user presence
+
+This makes the project feel like a real chat platform.
+
+---
+
+## Phase 5: Optimization
+Goal:
+- reduce delay
+- reduce memory use
+- reduce packet loss impact
+
+Optimizations:
+- smaller audio chunks
+- non-blocking async processing
+- lightweight binary format
+- silence detection
+- optional packet dropping for old frames
+- minimal server logic
+
+Best rule:
+If a frame is too old, skip it instead of delaying playback.
+
+That keeps the system feeling real-time.
+
+---
+
+### 5) Best Free Architecture
+
+## Option A: Pure Python Local Research System
+Best for:
+- experiments
+- testing
+- learning
+- fast development
+
+Flow:
+Microphone -> Raw Frame Encoder -> WebSocket -> Receiver -> Decoder -> Speaker
+
+Good because:
+- simple
+- free
+- easy to debug
+
+---
+
+## Option B: Python Server + Web Client
+Best for:
+- real product path
+- cross-device support
+- browser access
+
+Flow:
+Browser mic -> browser encoder -> server signaling -> receiver browser playback
+
+Good because:
+- no app install needed
+- easy sharing
+- works on phone and PC
+
+---
+
+## Option C: WebRTC Later
+Best for:
+- lowest latency
+- production voice chat
+- direct peer-to-peer transfer
+
+Good because:
+- fast
+- built for real-time media
+- handles network changes better
+
+For now, keep this for the later phase.
+
+---
+
+### 6) Data Format Design
+
+Use a simple custom format.
+
+#### Frame fields
+- `version`
+- `frame_id`
+- `timestamp_ms`
+- `sample_rate`
+- `channels`
+- `bit_depth`
+- `payload_length`
+- `audio_payload`
+- `crc32`
+
+#### Why this is good
+- easy to debug
+- easy to store
+- easy to reconstruct
+- easy to extend later
+
+---
+
+### 7) Best File Structure
+
+```text
+voice_project/
+├── server.py
+├── client.py
+├── encoder.py
+├── decoder.py
+├── audio_io.py
+├── packet_format.py
+├── utils.py
+├── requirements.txt
+├── templates/
+├── static/
+└── data/

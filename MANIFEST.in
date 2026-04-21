@@ -1,0 +1,14 @@
+include README.md
+include pyproject.toml
+include setup.py
+include MANIFEST.in
+
+recursive-include wavcore *.py *.c *.h
+recursive-include docs *.md
+
+recursive-exclude * __pycache__
+recursive-exclude * *.pyd
+recursive-exclude * *.so
+recursive-exclude * *.pyc
+recursive-exclude * *.egg-info
+recursive-exclude _unneeded *

@@ -1,0 +1,28 @@
+# Build artifacts
+dist/
+build/
+*.egg-info/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# C build temp files
+wavcore/_codec/_codec_cffi.c
+wavcore/_codec/wavcore/
+
+# Generated audio/data files
+*.wav
+*.vdat
+*.vtxt
+
+# IDE
+.vscode/
+.idea/
+
+# Python env
+venv/
+.env/
+
+# Archive folder
+_unneeded/
