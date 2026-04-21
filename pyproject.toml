@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "wavcore"
-version = "1.0.0"
+version = "1.0.2"
 description = "Ultra-fast lossless voice codec — real-time recording, VTXT text serialization, and bit-perfect reconstruction with a C engine."
 readme = "README.md"
 license = "MIT"
@@ -37,9 +37,9 @@ dev = [
 ]
 
 [project.urls]
-Homepage    = "https://github.com/wavcore/wavcore"
-Source      = "https://github.com/wavcore/wavcore"
-Issues      = "https://github.com/wavcore/wavcore/issues"
+Homepage    = "https://github.com/Zyro-Hub/wavecore"
+Source      = "https://github.com/Zyro-Hub/wavecore"
+Issues      = "https://github.com/Zyro-Hub/wavecore/issues"
 
 [tool.setuptools.packages.find]
 where   = ["."]
