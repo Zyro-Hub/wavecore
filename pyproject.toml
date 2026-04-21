@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "wavcore"
-version = "2.0.0"
+version = "2.0.1"
 description = "Ultra-fast lossless voice codec — real-time recording, VTXT text serialization, and bit-perfect reconstruction with a C engine."
 readme = "README.md"
 license = "MIT"
