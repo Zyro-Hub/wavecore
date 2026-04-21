@@ -1,12 +1,11 @@
 # Build artifacts
-dist/
 build/
 *.egg-info/
 __pycache__/
 *.pyc
 *.pyo
 *.pyd
-_unneeded/
+
 # C build temp files
 wavcore/_codec/_codec_cffi.c
 wavcore/_codec/wavcore/
