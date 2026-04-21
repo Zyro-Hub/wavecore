@@ -6,7 +6,7 @@ __pycache__/
 *.pyc
 *.pyo
 *.pyd
-
+_unneeded/
 # C build temp files
 wavcore/_codec/_codec_cffi.c
 wavcore/_codec/wavcore/
@@ -24,5 +24,3 @@ wavcore/_codec/wavcore/
 venv/
 .env/
 
-# Archive folder
-_unneeded/

@@ -1,6 +1,6 @@
-# VTXT Format Specification — v1.0
+# VTXT Format Specification — v1.0 (WavCore 2.0.0)
 
-> **Complete formal specification for the WavCore VTXT audio text format.**  
+> **Complete formal specification for the WavCore VTXT audio text format.**
 > This document defines every field, value type, constraint, and encoding rule.
 
 ---
@@ -15,8 +15,9 @@ VTXT (Voice Data Text) is a **line-based, plain-text audio serialization format*
 | Character encoding | **UTF-8** |
 | Line endings | `LF` (`\n`) or `CRLF` (`\r\n`) — both accepted |
 | Byte order mark | Not required, not recommended |
-| Max line length | Unbounded (SAMPLES_HEX can be very long) |
+| Max line length | Unbounded (`SAMPLES_HEX` can be very long) |
 | Format version | `1` (current) |
+| WavCore version | 2.0.0+ |
 
 ---
 
@@ -36,16 +37,17 @@ No content is allowed outside these sections (except blank lines and `#` comment
 
 ## Section 1 — Comments
 
-Any line whose first non-whitespace character is `#` is a comment.  
-Comments may appear anywhere in the file.  
-Comments are **ignored** by the parser.
+Any line whose first non-whitespace character is `#` is a comment.
+Comments may appear anywhere in the file and are **ignored** by the parser.
 
 ```
-# This is a comment
 # ================================================================
 # wavcore VTXT  v1.0
 # Recorded : 2026-04-21 09:43:00 UTC
 # Engine   : C engine [cffi / MSVC 64-bit .pyd]
+# SAMPLES_HEX = raw IEEE-754 float32 bytes, uppercase hex
+# Zero precision loss — no floating-point rounding
+# MODE: LIVE (frames written frame-by-frame during capture)
 # ================================================================
 ```
 
@@ -58,14 +60,13 @@ Comments are **ignored** by the parser.
 ```
 [FILE_HEADER]
 KEY=VALUE
-KEY=VALUE
 ...
 [/FILE_HEADER]
 ```
 
-- The opening tag `[FILE_HEADER]` and closing tag `[/FILE_HEADER]` must each be on their own line.
-- Each field is a single `KEY=VALUE` pair — one per line. No spaces around `=`.
-- Unknown keys MUST be ignored by parsers (forward compatibility).
+- Opening `[FILE_HEADER]` and closing `[/FILE_HEADER]` each on their own line
+- Each field is `KEY=VALUE` — one per line, no spaces around `=`
+- Unknown keys MUST be ignored (forward compatibility)
 
 ### Required Fields
 
@@ -73,34 +74,51 @@ KEY=VALUE
 |---|---|---|---|
 | `CODEC_VERSION` | integer | WavCore codec format version | `1` |
 | `FILE_VERSION` | integer | File format revision | `1` |
-| `TOTAL_FRAMES` | integer ≥ 1 | Number of `[FRAME]` blocks in this file | `500` |
+| `TOTAL_FRAMES` | integer ≥ 1 | Number of `[FRAME]` blocks | `500` |
 | `SAMPLE_RATE` | integer | Samples per second (Hz) | `48000` |
-| `CHANNELS` | integer | Audio channels (1=mono, 2=stereo) | `1` |
-| `BIT_DEPTH` | integer | Bits per sample (always 32 for float32) | `32` |
+| `CHANNELS` | integer | Audio channels (1=mono) | `1` |
+| `BIT_DEPTH` | integer | Bits per sample (always 32) | `32` |
 | `FRAME_MS` | integer | Frame duration in milliseconds | `20` |
-| `DURATION_MS` | float | Total audio duration in milliseconds | `10000.000000` |
+| `DURATION_MS` | float | Total audio duration in ms | `10000.000000` |
 | `CREATED_UNIX` | integer | Unix timestamp of recording start | `1745123456` |
 | `CREATED_UTC` | string | Human-readable UTC datetime | `2026-04-21 09:43:00 UTC` |
 
-### Computed Constraints
+### Optional Fields (v2.0.0+)
 
-These relationships must hold in a valid file:
+| Field | Type | Description | Example |
+|---|---|---|---|
+| `RECORD_MODE` | string | Recording mode used | `LIVE` or `NORMAL` |
+
+> **Note:** `RECORD_MODE=LIVE` is written by `live_record()`. Normal `record()` files do not include this field. Parsers must ignore it if not present.
+
+### Live Mode Header Note
+
+In Live Mode, `TOTAL_FRAMES` and `DURATION_MS` are written as padded placeholders during recording and patched with final values when recording stops:
+
+```
+# During recording:
+TOTAL_FRAMES=0000000000   ← placeholder
+DURATION_MS=            0.000000   ← placeholder
+
+# After recording stops (header is rewritten):
+TOTAL_FRAMES=94
+DURATION_MS=1880.000000
+```
+
+### Computed Constraints
 
 ```
 SAMPLES_COUNT_PER_FRAME = SAMPLE_RATE × FRAME_MS / 1000
-                        = 48000 × 20 / 1000
-                        = 960
+                        = 48000 × 20 / 1000 = 960
 
-PAYLOAD_LEN_PER_FRAME   = SAMPLES_COUNT_PER_FRAME × 4   (4 bytes per float32)
+PAYLOAD_LEN_PER_FRAME   = SAMPLES_COUNT × 4   (4 bytes per float32)
                         = 960 × 4 = 3840
 
-SAMPLES_HEX_LEN         = SAMPLES_COUNT_PER_FRAME × 8   (8 hex chars per float32)
+SAMPLES_HEX_LEN         = SAMPLES_COUNT × 8   (8 hex chars per float32)
                         = 960 × 8 = 7680
-
-TOTAL_FRAMES ≥ ⌈DURATION_MS / FRAME_MS⌉
 ```
 
-### Example `[FILE_HEADER]`
+### Example `[FILE_HEADER]` — Normal Mode
 
 ```
 [FILE_HEADER]
@@ -117,6 +135,24 @@ CREATED_UTC=2026-04-21 09:43:00 UTC
 [/FILE_HEADER]
 ```
 
+### Example `[FILE_HEADER]` — Live Mode
+
+```
+[FILE_HEADER]
+CODEC_VERSION=1
+FILE_VERSION=1
+TOTAL_FRAMES=94
+SAMPLE_RATE=48000
+CHANNELS=1
+BIT_DEPTH=32
+FRAME_MS=20
+DURATION_MS=1880.000000
+CREATED_UNIX=1745123456
+CREATED_UTC=2026-04-21 09:43:00 UTC
+RECORD_MODE=LIVE
+[/FILE_HEADER]
+```
+
 ---
 
 ## Section 3 — `[FRAME]` Blocks
@@ -126,16 +162,14 @@ CREATED_UTC=2026-04-21 09:43:00 UTC
 ```
 [FRAME]
 KEY=VALUE
-KEY=VALUE
 ...
 SAMPLES_HEX=<hex_string>
 [/FRAME]
 ```
 
-- `[FRAME]` opens, `[/FRAME]` closes — each on its own line.
-- `SAMPLES_HEX` **must be the last field** before `[/FRAME]`.
-- Frames **must appear in ascending `FRAME_ID` order**.
-- Gaps in `FRAME_ID` are valid — decoders insert silence for missing IDs.
+- `SAMPLES_HEX` **must be the last field** before `[/FRAME]`
+- Frames **must appear in ascending `FRAME_ID` order**
+- Gaps in `FRAME_ID` are valid — decoders insert silence for missing IDs
 
 ### Required Fields
 
@@ -149,36 +183,28 @@ SAMPLES_HEX=<hex_string>
 | `BIT_DEPTH` | integer | Always `32` | Bits per sample |
 | `PAYLOAD_LEN` | integer | `= SAMPLES_COUNT × 4` | Raw payload bytes |
 | `SAMPLES_COUNT` | integer | `= SAMPLE_RATE × FRAME_MS / 1000` | Samples in this frame |
-| `ORIG_CRC32` | hex string | 8 uppercase hex chars, no `0x` prefix | CRC-32 of header + payload |
-| `SAMPLES_HEX` | hex string | `SAMPLES_COUNT × 8` hex chars | IEEE-754 float32 samples |
+| `ORIG_CRC32` | hex string | 8 uppercase hex chars, no `0x` | CRC-32 of header + payload |
+| `SAMPLES_HEX` | hex string | `SAMPLES_COUNT × 8` uppercase hex chars | IEEE-754 float32 samples |
 
 ### Field Details
 
 #### `FRAME_ID`
 
-- Starts at `0` for the first frame.
-- Increments by `1` for each consecutive frame.
-- If a frame is missing (e.g., dropped during transmission), decoders detect the gap  
-  and insert `(missing_count × SAMPLES_COUNT)` samples of **silence (0.0)**.
+Starts at `0` for the first frame, increments by 1.
+If a frame is missing, decoders detect the gap via non-consecutive IDs and insert silence:
 
 ```
-# Example: frames 0, 1, 3 are present; frame 2 is missing
 [FRAME] FRAME_ID=0 ... [/FRAME]
 [FRAME] FRAME_ID=1 ... [/FRAME]
-                            ← Frame 2: decoder inserts 960 silent samples here
+                            ← Frame 2 missing: 960 silent samples inserted
 [FRAME] FRAME_ID=3 ... [/FRAME]
 ```
 
 #### `TIMESTAMP_MS`
 
-Wall-clock time in **milliseconds since the Unix epoch** (Jan 1 1970 00:00:00 UTC).
+Wall-clock milliseconds since Unix epoch:
 
 ```
-TIMESTAMP_MS=1745123456789.000000
-```
-
-Computed as:
-```python
 TIMESTAMP_MS = recording_start_unix_time * 1000.0 + frame_id * FRAME_MS
 ```
 
@@ -186,59 +212,33 @@ Always written with 6 decimal places.
 
 #### `ORIG_CRC32`
 
-CRC-32 computed over the **packed header fields + raw payload bytes**:
+CRC-32 over packed header fields + raw payload:
 
 ```
 CRC-32 input = struct.pack(">BIdIBBI",
-    FRAME_VERSION,   # B  — uint8,  big-endian
-    FRAME_ID,        # I  — uint32, big-endian
-    TIMESTAMP_MS,    # d  — double, big-endian
-    SAMPLE_RATE,     # I  — uint32, big-endian
-    CHANNELS,        # B  — uint8
-    BIT_DEPTH,       # B  — uint8
-    PAYLOAD_LEN,     # I  — uint32, big-endian
-) + PAYLOAD_BYTES    # raw IEEE-754 float32 bytes (little-endian on x86)
+    FRAME_VERSION,   # B  uint8
+    FRAME_ID,        # I  uint32
+    TIMESTAMP_MS,    # d  double
+    SAMPLE_RATE,     # I  uint32
+    CHANNELS,        # B  uint8
+    BIT_DEPTH,       # B  uint8
+    PAYLOAD_LEN,     # I  uint32
+) + PAYLOAD_BYTES    # raw IEEE-754 float32 bytes
 ```
 
-Result written as **8 uppercase hex characters without `0x` prefix**:
-
-```
-ORIG_CRC32=BC5C582D
-```
-
-Parsers recompute this CRC to verify frame integrity.  
-A mismatched CRC means the frame data was corrupted or tampered.
+Written as 8 uppercase hex chars without `0x` prefix: `BC5C582D`
 
 #### `SAMPLES_HEX`
 
-The raw audio samples encoded as uppercase hexadecimal.
-
-**Encoding algorithm:**
-1. Take the `float32` numpy array for this frame
-2. Interpret each `float32` as 4 raw bytes (IEEE-754, native byte order)
-3. For each byte, write 2 uppercase hex characters: `HEX_TABLE[byte]`
-4. Concatenate all hex pairs into one continuous string
+IEEE-754 float32 samples as uppercase hex. Encoding:
 
 ```
-Example encoding of 3 samples:
-
-  float32 value   IEEE-754 bytes     Hex chars
-  ─────────────   ──────────────     ─────────
-  0.00000000      00 00 00 00        00000000
-  0.51864624      3F 04 9B 51        3F049B51   (varies by CPU byte order)
-  -0.25000000     BE 80 00 00        BE800000
-
-Result: 000000003F049B51BE800000  (24 chars for 3 samples)
+float32: 0.518646
+IEEE-754: 3F 04 9B 51
+Hex:      3F049B51
 ```
 
-For `SAMPLES_COUNT=960`:  
-→ `SAMPLES_HEX` is always exactly **7,680 characters** long.
-
-**Decoding algorithm (reverse):**
-1. Split the hex string into chunks of 8 characters
-2. Convert each chunk back to 4 bytes using `bytes.fromhex(chunk)`
-3. Reinterpret 4 bytes as a `float32` using `struct.unpack("f", b)`
-4. Collect all float32 values into the frame's sample array
+For `SAMPLES_COUNT=960`: always exactly **7,680 characters**.
 
 ### Example `[FRAME]` Block
 
@@ -253,7 +253,7 @@ BIT_DEPTH=32
 PAYLOAD_LEN=3840
 SAMPLES_COUNT=960
 ORIG_CRC32=BC5C582D
-SAMPLES_HEX=00000000000000003F049B51BE8000003C8B43963D...  (7680 chars total)
+SAMPLES_HEX=00000000000000003F049B51BE800000...  (7680 chars total)
 [/FRAME]
 ```
 
@@ -314,8 +314,6 @@ SAMPLES_HEX=BE800000BE4CCCCD3EC000003E200000...  (7680 chars)
 
 ## Parser Implementation Guide
 
-A minimal compliant parser:
-
 ```python
 def parse_vtxt(path: str):
     file_hdr = {}
@@ -340,7 +338,7 @@ def parse_vtxt(path: str):
             if not line or line.startswith("#"):
                 continue
             if line == "[FILE_HEADER]":   in_fh = True;          continue
-            if line == "[/FILE_HEADER]":  in_fh = False;
+            if line == "[/FILE_HEADER]":  in_fh = False
                 missing = REQUIRED_HDR - set(file_hdr)
                 if missing:
                     raise ValueError(f"FILE_HEADER missing: {missing}")
@@ -357,11 +355,6 @@ def parse_vtxt(path: str):
             k, _, v = line.partition("=")
             (file_hdr if in_fh else cur_fr)[k.strip()] = v.strip()
 
-    # Validate frame count
-    expected = int(file_hdr["TOTAL_FRAMES"])
-    if len(frames) != expected:
-        raise ValueError(f"Expected {expected} frames, got {len(frames)}")
-
     return file_hdr, frames
 ```
 
@@ -373,17 +366,18 @@ A VTXT file is **valid** if and only if:
 
 1. File is UTF-8 encoded
 2. Exactly one `[FILE_HEADER]` block is present
-3. All required `[FILE_HEADER]` fields are present (see table above)
+3. All required `[FILE_HEADER]` fields are present
 4. `TOTAL_FRAMES` equals the actual number of `[FRAME]` blocks
 5. All required `[FRAME]` fields are present in every frame
 6. `FRAME_ID` values are non-negative integers in ascending order
 7. `SAMPLES_HEX` length equals `SAMPLES_COUNT × 8` for every frame
 8. `SAMPLES_HEX` contains only uppercase hex characters `[0-9A-F]`
 9. `ORIG_CRC32` is exactly 8 uppercase hex characters
-10. Per-frame CRC computed from packed header + raw bytes matches `ORIG_CRC32`
+10. CRC computed from packed header + raw bytes matches `ORIG_CRC32`
 
-Rules 9–10 are **integrity checks** — a parser SHOULD validate them and report
-bad frames rather than silently using corrupt data.
+Rules 9–10 are **integrity checks** — parsers SHOULD validate and report bad frames.
+
+> **Live mode note:** During active recording, `TOTAL_FRAMES` in the header is a padded placeholder and will not yet match the frame count. After recording stops, the header is patched with the correct value. Parsers reading a file mid-recording should handle this gracefully.
 
 ---
 
@@ -393,8 +387,8 @@ bad frames rather than silently using corrupt data.
 |---|---|
 | `1` | Initial release — mono/stereo, 32-bit float, CRC-32 |
 
-Future versions will increment `CODEC_VERSION` and add new fields.  
-Parsers MUST reject files with `CODEC_VERSION` values they do not recognize.  
+Future versions will increment `CODEC_VERSION`.
+Parsers MUST reject unknown `CODEC_VERSION` values.
 Parsers MUST ignore unknown fields within known versions.
 
 ---
@@ -406,7 +400,9 @@ Parsers MUST ignore unknown fields within known versions.
 | 48,000 Hz | 20 ms | 5 s | 250 | ~1.9 MB |
 | 48,000 Hz | 20 ms | **10 s** | **500** | **~3.9 MB** |
 | 48,000 Hz | 20 ms | 60 s | 3,000 | ~23 MB |
+| 48,000 Hz | 20 ms | 120 s | 6,000 | ~46 MB |
 | 16,000 Hz | 20 ms | 10 s | 500 | ~1.3 MB |
 | 44,100 Hz | 20 ms | 10 s | 500 | ~3.6 MB |
 
 The dominant cost is `SAMPLES_HEX` — always `SAMPLES_COUNT × 8` characters per frame.
+In Live Mode, the file grows by approximately **7.9 KB every 20ms** at 48kHz.

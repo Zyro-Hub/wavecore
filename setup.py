@@ -18,8 +18,3 @@ from setuptools import setup
 setup(
     cffi_modules=["wavcore/_codec/_build_ffi.py:ffi"],
 )
-project_urls={
-        "Homepage": "https://github.com/Zyro-Hub/wavecore",
-        "Repository": "https://github.com/Zyro-Hub/wavecore",
-        "Issues": "https://github.com/Zyro-Hub/wavecore/issues",
-    },

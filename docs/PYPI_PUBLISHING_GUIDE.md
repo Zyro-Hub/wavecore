@@ -1,6 +1,6 @@
 # Publishing WavCore to PyPI
 
-> **Step-by-step guide to publishing the `wavcore` package on PyPI**  
+> **Step-by-step guide to publishing the `wavcore` package on PyPI**
 > so anyone can install it with `pip install wavcore`.
 
 ---
@@ -10,7 +10,7 @@
 1. A [PyPI account](https://pypi.org/account/register/) — free
 2. A [TestPyPI account](https://test.pypi.org/account/register/) — free (for testing)
 3. Python 3.9+ and pip installed
-4. The wavcore source directory (this folder)
+4. The wavcore source directory
 
 ---
 
@@ -27,15 +27,14 @@ pip install build twine
 
 ## Step 2 — Set Up PyPI API Token
 
-**Never use your PyPI password directly.** Use an API token instead.
+**Never use your PyPI password directly.** Use an API token.
 
 1. Log in to [pypi.org](https://pypi.org)
 2. Go to **Account Settings → API Tokens**
-3. Click **Add API token**
-4. Name it `wavcore-upload`, scope: **Entire account**
-5. Copy the token (starts with `pypi-...`)
+3. Click **Add API token** → name it `wavcore-upload`, scope: Entire account
+4. Copy the token (starts with `pypi-...`)
 
-Save it in `~/.pypirc`:
+Save to `~/.pypirc`:
 
 ```ini
 [distutils]
@@ -59,22 +58,20 @@ repository = https://test.pypi.org/legacy/
 
 ## Step 3 — Verify `pyproject.toml`
 
-Open `pyproject.toml` and fill in your real details:
-
 ```toml
 [project]
-name        = "wavcore"           # must be unique on PyPI
-version     = "1.0.0"
-description = "Ultra-fast lossless voice codec — real-time recording, VTXT serialization, C engine"
+name        = "wavcore"
+version     = "2.0.0"
+description = "Ultra-fast lossless voice codec — real-time recording, live VTXT writing, C engine."
 readme      = "README.md"
 license     = { text = "MIT" }
 requires-python = ">=3.9"
 
 authors = [
-    { name = "Your Name", email = "you@example.com" }
+    { name = "Prashant Pandey", email = "technical121@gmail.com" }
 ]
 
-keywords = ["audio", "codec", "voice", "recording", "lossless", "real-time", "vtxt"]
+keywords = ["audio", "codec", "voice", "recording", "lossless", "real-time", "vtxt", "live"]
 
 classifiers = [
     "Development Status :: 4 - Beta",
@@ -98,21 +95,14 @@ dependencies = [
 ]
 
 [project.urls]
-Homepage    = "https://github.com/YOUR_USERNAME/wavcore"
-Source      = "https://github.com/YOUR_USERNAME/wavcore"
-Issues      = "https://github.com/YOUR_USERNAME/wavcore/issues"
+Homepage = "https://github.com/Zyro-Hub/wavecore"
+Source   = "https://github.com/Zyro-Hub/wavecore"
+Issues   = "https://github.com/Zyro-Hub/wavecore/issues"
 ```
-
-> **Important:** The `name = "wavcore"` must be unique on PyPI. Check at  
-> `https://pypi.org/project/wavcore/` — if taken, choose another name.
 
 ---
 
 ## Step 4 — Add `MANIFEST.in`
-
-This tells the build system which non-Python files to include in the source distribution:
-
-Create file `MANIFEST.in` in the root directory:
 
 ```
 include README.md
@@ -130,22 +120,33 @@ recursive-exclude * *.pyc
 
 ## Step 5 — Test Locally First
 
-Before publishing, do a final local install test:
-
 ```bash
-# Uninstall any existing version
 pip uninstall wavcore -y
-
-# Install fresh from source
 pip install -e .
-
-# Verify
 python -c "import wavcore; print(wavcore.__version__, wavcore.engine_info())"
 ```
 
-Expected output:
+Expected:
 ```
-1.0.0 C engine [cffi / MSVC 64-bit .pyd]  — ultra-fast
+2.0.0 C engine [cffi / MSVC 64-bit .pyd]  — ultra-fast
+```
+
+Also verify both recording modes work:
+
+```python
+import wavcore
+
+# Test Normal mode
+print("Testing normal mode...")
+wavcore.record("test.vtxt", "test_orig.wav", duration=2)
+wavcore.decode("test.vtxt", "test_recon.wav", play=False)
+
+# Test Live mode import
+print("Testing live_record import...")
+from wavcore.recorder import live_record_to_vtxt
+print("live_record_to_vtxt:", live_record_to_vtxt.__doc__[:40])
+
+print("All OK")
 ```
 
 ---
@@ -156,102 +157,87 @@ Expected output:
 python -m build
 ```
 
-This creates a `dist/` folder:
-
+Creates:
 ```
 dist/
-├── wavcore-1.0.0.tar.gz           ← source distribution (sdist)
-└── wavcore-1.0.0-cp312-...whl     ← wheel (pre-compiled, platform-specific)
+├── wavcore-2.0.0.tar.gz           ← source distribution
+└── wavcore-2.0.0-cp312-...whl     ← wheel (platform-specific)
 ```
-
-> **Note about C extensions and wheels:**  
-> The `.whl` file is platform-specific (e.g., `cp312-win_amd64`).  
-> Users on other platforms (Linux, macOS) will receive the `.tar.gz`  
-> and compile the C engine during their `pip install` — this is automatic.
 
 ---
 
-## Step 7 — Publish to TestPyPI First (Recommended)
+## Step 7 — Check the Package
 
-Always test on TestPyPI before the real PyPI:
+```bash
+twine check dist/*
+```
+
+Must show:
+```
+PASSED wavcore-2.0.0.tar.gz
+PASSED wavcore-2.0.0-cp312-...whl
+```
+
+---
+
+## Step 8 — Publish to TestPyPI First
 
 ```bash
 twine upload --repository testpypi dist/*
 ```
 
-Then test the install from TestPyPI:
-
+Test install:
 ```bash
-pip install --index-url https://test.pypi.org/simple/ --extra-index-url https://pypi.org/simple/ wavcore
+pip install --index-url https://test.pypi.org/simple/ \
+            --extra-index-url https://pypi.org/simple/ wavcore
 ```
 
 Verify:
 ```python
 import wavcore
-print(wavcore.__version__)
+print(wavcore.__version__)      # 2.0.0
 print(wavcore.engine_info())
+print(dir(wavcore))             # should include 'live_record'
 ```
 
 ---
 
-## Step 8 — Publish to PyPI
-
-Once TestPyPI looks good, upload to the real PyPI:
+## Step 9 — Publish to PyPI
 
 ```bash
 twine upload dist/*
 ```
 
-Enter your token when prompted (or it reads from `~/.pypirc`).
+**Done!** Live at `https://pypi.org/project/wavcore/2.0.0/`
 
-**Done!** Your package is now live at `https://pypi.org/project/wavcore/`.
-
-Anyone in the world can now install it:
-
+Anyone can now install:
 ```bash
 pip install wavcore
 ```
 
 ---
 
-## Step 9 — Update `app.py` Import
+## Versioning History
 
-Verify the app still works after publishing:
+| Version | Changes |
+|---|---|
+| `1.0.0` | Initial release — `record()`, `decode()`, C engine |
+| `1.0.1` | Bug fixes |
+| `1.0.2` | PyPI metadata improvements |
+| **`2.0.0`** | **`live_record()` — real-time per-frame .vtxt writing; mode selection in app.py** |
 
-```python
-# Install from PyPI (not editable)
-pip install wavcore
+To release a future update:
 
-# Run
-python app.py
-```
-
----
-
-## Versioning for Updates
-
-Every time you update the package, bump the version in `pyproject.toml`:
-
-```
-1.0.0  → Initial release
-1.0.1  → Bug fix
-1.1.0  → New feature (backward compatible)
-2.0.0  → Breaking change
-```
-
-Then rebuild and re-upload:
-
-```bash
-python -m build
-twine upload dist/*
-```
+1. Bump `version` in `pyproject.toml` and `__init__.py`
+2. Update `README.md` "What's New" section
+3. `python -m build`
+4. `twine upload dist/*`
 
 ---
 
 ## Building Wheels for Multiple Platforms
 
-A single `python -m build` only builds for your current OS/Python.  
-To distribute pre-compiled wheels for all platforms, use **GitHub Actions** with `cibuildwheel`:
+Use **GitHub Actions** with `cibuildwheel` to auto-publish on every git tag:
 
 ### `.github/workflows/publish.yml`
 
@@ -261,7 +247,7 @@ name: Publish to PyPI
 on:
   push:
     tags:
-      - "v*"   # triggers on git tag like v1.0.0
+      - "v*"
 
 jobs:
   build_wheels:
@@ -270,15 +256,12 @@ jobs:
     strategy:
       matrix:
         os: [ubuntu-latest, windows-latest, macos-latest]
-
     steps:
       - uses: actions/checkout@v4
-
       - name: Build wheels
         uses: pypa/cibuildwheel@v2.19
         env:
           CIBW_BUILD: "cp39-* cp310-* cp311-* cp312-*"
-
       - uses: actions/upload-artifact@v4
         with:
           name: wheels-${{ matrix.os }}
@@ -294,34 +277,31 @@ jobs:
           pattern: wheels-*
           merge-multiple: true
           path: dist
-
       - name: Publish to PyPI
         uses: pypa/gh-action-pypi-publish@release/v1
         with:
           password: ${{ secrets.PYPI_API_TOKEN }}
 ```
 
-This auto-publishes on every `git tag v*` with wheels for:
-- Windows (cp39, cp310, cp311, cp312)
-- Linux (cp39, cp310, cp311, cp312)
-- macOS (cp39, cp310, cp311, cp312)
+This builds wheels for Windows, Linux, macOS × Python 3.9–3.12 automatically.
 
 ---
 
 ## Complete Publishing Checklist
 
 ```
-□  pyproject.toml — fill in your name, email, GitHub URLs
-□  README.md       — looks good on PyPI (check with twine check)
-□  MANIFEST.in     — includes codec_core.c so Linux/macOS can compile
-□  Version bumped  — pyproject.toml [project] version = "X.Y.Z"
-□  pip install -e . runs without errors
-□  python app.py    runs successfully (records + decodes)
+□  pyproject.toml — version = "2.0.0", correct name/email/URLs
+□  __init__.py    — __version__ = "2.0.0"
+□  README.md      — "What's New" section updated
+□  pip install -e .  runs without errors
+□  wavcore.live_record exists in dir(wavcore)
+□  python app.py   shows mode selection menu
 □  python -m build  completes without errors
-□  twine upload --repository testpypi dist/*  (test)
-□  pip install --index-url testpypi wavcore    (verify)
-□  twine upload dist/*                         (real PyPI)
-□  pip install wavcore                         (final verify)
+□  twine check dist/*  shows PASSED
+□  twine upload --repository testpypi dist/*
+□  pip install from testpypi → verify
+□  twine upload dist/*  (real PyPI)
+□  pip install wavcore → final verify
 ```
 
 ---
@@ -329,17 +309,17 @@ This auto-publishes on every `git tag v*` with wheels for:
 ## Useful Commands Reference
 
 ```bash
-# Check your package for issues before upload
+# Check package before upload
 twine check dist/*
 
-# List what's in the distribution
-tar tzf dist/wavcore-1.0.0.tar.gz | head -30
+# List contents of source distribution
+tar tzf dist/wavcore-2.0.0.tar.gz | head -30
 
-# Uninstall and test clean install
+# Clean reinstall test
 pip uninstall wavcore -y
-pip install dist/wavcore-1.0.0-*.whl
+pip install dist/wavcore-2.0.0-*.whl
 
-# See what version is on PyPI
+# Check what's on PyPI
 pip index versions wavcore
 
 # Force upgrade from PyPI
@@ -348,35 +328,16 @@ pip install --upgrade --force-reinstall wavcore
 
 ---
 
-## Why C Extensions on PyPI Are Safe
-
-When `pip install wavcore` is run:
-
-1. pip downloads `wavcore-1.0.0.tar.gz` (source distribution)
-2. pip installs build dependencies: `setuptools, cffi, wheel`
-3. `setup.py cffi_modules` triggers: cffi reads `_build_ffi.py`
-4. cffi finds the system C compiler:
-   - **Windows:** MSVC (installed with Python via Visual C++ redistributable)
-   - **Linux:** GCC (standard on most systems)
-   - **macOS:** Clang (via Xcode command line tools)
-5. `codec_core.c` is compiled to `_codec_core.cp312-win_amd64.pyd`
-6. `wavcore` is installed with the C engine ready
-
-The user never touches a compiler — it's all automatic.
-
----
-
 ## Troubleshooting PyPI Upload
 
-### "Invalid package name"
-- Package name must be `[A-Za-z0-9_-]` only, global uniqueness on PyPI
-
 ### "File already exists"
-- You cannot re-upload the same version. Bump the version in `pyproject.toml`.
+Cannot re-upload the same version. Bump the version in `pyproject.toml`.
+
+### "Invalid package name"
+Package name must be `[A-Za-z0-9_-]` only, globally unique on PyPI.
 
 ### "Compilation failed on user's machine"
-- Check `MANIFEST.in` includes `codec_core.c`
-- Test on a fresh VM: `pip install wavcore` from TestPyPI
+Check `MANIFEST.in` includes `codec_core.c`. Test on a fresh VM.
 
 ### "twine: command not found"
 ```bash

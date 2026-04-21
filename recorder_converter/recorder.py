@@ -25,6 +25,8 @@ import struct
 import time
 import wave
 import datetime
+import threading
+import queue
 import numpy as np
 import sounddevice as sd
 
@@ -211,6 +213,267 @@ def record_to_vtxt(
 
     return {
         "frames":        n_frames,
+        "duration_ms":   duration_ms,
+        "sample_rate":   sample_rate,
+        "channels":      channels,
+        "peak":          peak,
+        "rms":           rms,
+        "vtxt_path":     vtxt_path,
+        "orig_wav_path": orig_wav_path,
+        "created_unix":  created_unix,
+        "vtxt_size":     vtxt_size,
+        "encode_ms":     total_ms,
+    }
+
+
+def live_record_to_vtxt(
+    vtxt_path:        str,
+    orig_wav_path:    str,
+    max_duration_sec: int  = 60,
+    sample_rate:      int  = 48_000,
+    frame_ms:         int  = 20,
+) -> dict:
+    """
+    LIVE MODE: Record microphone and write each frame to .vtxt
+    in real-time as audio arrives. The file grows on disk while
+    you speak — you can watch it live.
+
+    Press ENTER at any time to stop recording early.
+    Auto-stops after `max_duration_sec` seconds.
+
+    Returns stats dict (same shape as record_to_vtxt).
+    """
+    channels          = 1
+    bit_depth         = 32
+    samples_per_frame = int(sample_rate * frame_ms / 1000)   # 960
+    max_frames        = int(max_duration_sec * 1000 / frame_ms)
+
+    print("=" * 64)
+    print("  LIVE RECORDER  ->  .vtxt  [C engine, real-time write]")
+    print(f"  Engine  : {_codec_engine_info()}")
+    print("=" * 64)
+    print(f"  Sample rate    : {sample_rate:,} Hz")
+    print(f"  Max duration   : {max_duration_sec} s")
+    print(f"  Frame size     : {frame_ms} ms  ({samples_per_frame} samples)")
+    print(f"  Output vtxt    : {vtxt_path}")
+    print("=" * 64)
+    print()
+    print("  >> Press ENTER at any time to stop recording. <<")
+    print()
+
+    # ── Countdown ─────────────────────────────────────────────
+    for i in range(3, 0, -1):
+        print(f"  Starting in {i}...", end="\r", flush=True)
+        time.sleep(1)
+    print("  [REC] LIVE RECORDING ... speak now!               ")
+    print("  (frames are being written to disk in real-time)")
+    print()
+
+    # ── Stop signal (Enter key or max duration) ──────────────
+    stop_event = threading.Event()
+
+    def _wait_for_enter():
+        try:
+            input()
+        except EOFError:
+            pass
+        stop_event.set()
+
+    enter_thread = threading.Thread(target=_wait_for_enter, daemon=True)
+    enter_thread.start()
+
+    # ── Audio callback → queue ───────────────────────────────
+    audio_queue = queue.Queue()
+
+    def _audio_callback(indata, frames, time_info, status):
+        if status:
+            print(f"  [WARN] {status}")
+        audio_queue.put(indata.copy())
+
+    # ── State ────────────────────────────────────────────────
+    t_start      = time.time()
+    created_unix = int(t_start)
+    rec_start_ms = t_start * 1000.0
+    now_utc      = datetime.datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S UTC")
+
+    frame_count     = 0
+    all_audio       = []
+    t_encode_total  = 0.0
+    t_crc_total     = 0.0
+
+    # ── Open file and write header + frames LIVE ─────────────
+    # Use a padded TOTAL_FRAMES so we can overwrite it at the end
+    _PAD = 10  # digits reserved for frame count
+
+    with open(vtxt_path, "w", encoding="utf-8") as f:
+        # Comment block
+        f.write("# ================================================================\n")
+        f.write("# VDAT TEXT CODEC  v1  (C-accelerated LIVE recorder)\n")
+        f.write("# Encoder : recorder_converter.recorder  +  codec_core (C engine)\n")
+        f.write(f"# Recorded: {now_utc}\n")
+        f.write(f"# Engine  : {_codec_engine_info()}\n")
+        f.write("#\n")
+        f.write("# SAMPLES_HEX = raw IEEE-754 float32 bytes, uppercase hex\n")
+        f.write("# Lossless: no floating-point rounding ever occurs\n")
+        f.write("# MODE: LIVE (frames written in real-time during capture)\n")
+        f.write("# ================================================================\n\n")
+
+        # [FILE_HEADER] — padded TOTAL_FRAMES for in-place update
+        f.write("[FILE_HEADER]\n")
+        f.write(f"CODEC_VERSION={_CODEC_VER}\n")
+        f.write(f"FILE_VERSION={_FILE_VER}\n")
+        tf_pos = f.tell()
+        f.write(f"TOTAL_FRAMES={'0':0>{_PAD}}\n")
+        f.write(f"SAMPLE_RATE={sample_rate}\n")
+        f.write(f"CHANNELS={channels}\n")
+        f.write(f"BIT_DEPTH={bit_depth}\n")
+        dur_pos = f.tell()
+        f.write(f"DURATION_MS={'0.000000':>20}\n")
+        f.write(f"CREATED_UNIX={created_unix}\n")
+        f.write(f"CREATED_UTC={now_utc}\n")
+        f.write("RECORD_MODE=LIVE\n")
+        f.write("[/FILE_HEADER]\n\n")
+        f.flush()
+
+        # ── Start audio stream ───────────────────────────────
+        stream = sd.InputStream(
+            samplerate=sample_rate,
+            channels=channels,
+            dtype="float32",
+            blocksize=samples_per_frame,
+            callback=_audio_callback,
+        )
+        stream.start()
+
+        try:
+            while frame_count < max_frames and not stop_event.is_set():
+                # Get next audio chunk from callback queue
+                try:
+                    data = audio_queue.get(timeout=0.1)
+                except queue.Empty:
+                    continue
+
+                chunk = data.flatten()
+
+                # Pad / trim to exact frame size
+                if len(chunk) < samples_per_frame:
+                    chunk = np.append(
+                        chunk,
+                        np.zeros(samples_per_frame - len(chunk),
+                                 dtype=np.float32),
+                    )
+                elif len(chunk) > samples_per_frame:
+                    chunk = chunk[:samples_per_frame]
+
+                all_audio.append(chunk)
+
+                # ── C encode ─────────────────────────────────
+                t0 = time.perf_counter()
+                hex_str = batch_encode(
+                    chunk.astype(np.float32), samples_per_frame
+                )[0]
+                t_encode_total += time.perf_counter() - t0
+
+                # ── C CRC ────────────────────────────────────
+                ts_ms   = rec_start_ms + frame_count * frame_ms
+                payload = chunk.astype(np.float32).tobytes()
+                t0 = time.perf_counter()
+                crc = compute_frame_crc(
+                    _FRAME_VER, frame_count, ts_ms,
+                    sample_rate, channels, bit_depth, payload,
+                )
+                t_crc_total += time.perf_counter() - t0
+
+                # ── Write [FRAME] LIVE ───────────────────────
+                f.write("[FRAME]\n")
+                f.write(f"FRAME_ID={frame_count}\n")
+                f.write(f"FRAME_VERSION={_FRAME_VER}\n")
+                f.write(f"TIMESTAMP_MS={ts_ms:.6f}\n")
+                f.write(f"SAMPLE_RATE={sample_rate}\n")
+                f.write(f"CHANNELS={channels}\n")
+                f.write(f"BIT_DEPTH={bit_depth}\n")
+                f.write(f"PAYLOAD_LEN={len(payload)}\n")
+                f.write(f"SAMPLES_COUNT={len(payload) // 4}\n")
+                f.write(f"ORIG_CRC32={crc:08X}\n")
+                f.write(f"SAMPLES_HEX={hex_str}\n")
+                f.write("[/FRAME]\n\n")
+                f.flush()                         # <-- LIVE flush
+
+                frame_count += 1
+
+                # Progress indicator (overwrites same line)
+                elapsed   = time.time() - t_start
+                vtxt_live = f.tell()
+                print(
+                    f"\r  [LIVE] Frame {frame_count:>6}  |  "
+                    f"{elapsed:.1f}s  |  "
+                    f"{vtxt_live / 1024:.1f} KB written",
+                    end="", flush=True,
+                )
+
+        except KeyboardInterrupt:
+            print("\n  [STOP] Interrupted by Ctrl+C.")
+
+        finally:
+            stream.stop()
+            stream.close()
+
+    # ── Update header placeholders with final values ─────────
+    duration_ms = frame_count * frame_ms
+
+    with open(vtxt_path, "r", encoding="utf-8") as f:
+        content = f.read()
+
+    content = content.replace(
+        f"TOTAL_FRAMES={'0':0>{_PAD}}",
+        f"TOTAL_FRAMES={frame_count}",
+        1,
+    )
+    content = content.replace(
+        f"DURATION_MS={'0.000000':>20}",
+        f"DURATION_MS={duration_ms:.6f}",
+        1,
+    )
+
+    with open(vtxt_path, "w", encoding="utf-8") as f:
+        f.write(content)
+
+    # ── Save original reference WAV ──────────────────────────
+    if all_audio:
+        audio = np.concatenate(all_audio)
+    else:
+        audio = np.zeros(1, dtype=np.float32)
+
+    pcm16 = (np.clip(audio, -1.0, 1.0) * 32767).astype(np.int16)
+    with wave.open(orig_wav_path, "w") as wf:
+        wf.setnchannels(channels)
+        wf.setsampwidth(2)
+        wf.setframerate(sample_rate)
+        wf.writeframes(pcm16.tobytes())
+
+    # ── Stats ────────────────────────────────────────────────
+    t_end     = time.time()
+    peak      = float(np.max(np.abs(audio)))
+    rms       = float(np.sqrt(np.mean(audio ** 2)))
+    vtxt_size = os.path.getsize(vtxt_path)
+    total_ms  = t_encode_total * 1000 + t_crc_total * 1000
+
+    print()
+    print()
+    print(f"  [OK] Recording stopped after {frame_count} frames "
+          f"({frame_count * frame_ms / 1000:.1f} s)")
+    print(f"  [OK] Original WAV  : {orig_wav_path}")
+    print(f"       Peak={peak:.6f}   RMS={rms:.6f}")
+    if peak < 0.001:
+        print("  [WARN] Very quiet — check microphone!")
+    print(f"  [OK] vtxt          : {vtxt_size:,} bytes  "
+          f"({vtxt_size / 1024:.1f} KB)")
+    print(f"  [OK] Encode total  : {t_encode_total*1000:.1f} ms  |  "
+          f"CRC: {t_crc_total*1000:.1f} ms")
+    print()
+
+    return {
+        "frames":        frame_count,
         "duration_ms":   duration_ms,
         "sample_rate":   sample_rate,
         "channels":      channels,
