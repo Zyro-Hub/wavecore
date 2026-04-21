@@ -273,3 +273,96 @@ def vtxt_to_wav(
         "sample_rate":   sample_rate,
         "total_ms":      total_ms,
     }
+
+
+def convert_audio(
+    audio_path:    str,
+    output_wav:    str,
+    sample_rate:   int  = 48_000,
+    frame_ms:      int  = 20,
+    play:          bool = False,
+    keep_vtxt:     bool = False,
+    vtxt_path:     str  = None,
+) -> dict:
+    """
+    ONE-CALL PIPELINE — Convert any audio file directly to a
+    decoded WAV without touching a microphone.
+
+    Pipeline:
+      audio_path  →  [file_to_vtxt]  →  temp.vtxt
+                  →  [vtxt_to_wav]   →  output_wav
+
+    Parameters
+    ----------
+    audio_path  : input audio file (WAV built-in; FLAC/OGG/MP3 via soundfile)
+    output_wav  : output WAV path
+    sample_rate : target Hz (default 48000)
+    frame_ms    : frame size in ms (default 20)
+    play        : play output after decode (default False)
+    keep_vtxt   : keep intermediate .vtxt on disk (default False — deleted)
+    vtxt_path   : custom path for intermediate .vtxt (default: <output_wav>.vtxt)
+
+    Returns
+    -------
+    dict with keys:
+      encode   → stats dict from file_to_vtxt()
+      decode   → stats dict from vtxt_to_wav()
+      vtxt_path, output_wav, duration_s, integrity_pct, peak, rms
+    """
+    import tempfile, os as _os
+
+    audio_path = _os.path.abspath(audio_path)
+    if not _os.path.isfile(audio_path):
+        raise FileNotFoundError(f"Audio file not found: {audio_path}")
+
+    # Intermediate .vtxt path
+    if vtxt_path is None:
+        vtxt_path = _os.path.splitext(output_wav)[0] + "_temp.vtxt"
+
+    print("=" * 64)
+    print("  CONVERT AUDIO  →  WAV  (one-call pipeline)")
+    print(f"  {_os.path.basename(audio_path)}  →  {_os.path.basename(vtxt_path)}"
+          f"  →  {_os.path.basename(output_wav)}")
+    print("=" * 64)
+    print()
+
+    # ── Step 1: audio file → .vtxt ────────────────────────────
+    from recorder_converter.recorder import file_to_vtxt
+    enc_stats = file_to_vtxt(
+        audio_path  = audio_path,
+        vtxt_path   = vtxt_path,
+        sample_rate = sample_rate,
+        frame_ms    = frame_ms,
+    )
+
+    # ── Step 2: .vtxt → WAV ───────────────────────────────────
+    dec_stats = vtxt_to_wav(
+        vtxt_path  = vtxt_path,
+        output_wav = output_wav,
+        play_audio = play,
+    )
+
+    # ── Cleanup temp .vtxt unless keep_vtxt=True ──────────────
+    if not keep_vtxt and _os.path.exists(vtxt_path):
+        _os.remove(vtxt_path)
+        print(f"  [OK] Temp vtxt removed: {_os.path.basename(vtxt_path)}")
+
+    print()
+    print("=" * 64)
+    print(f"  DONE  →  {_os.path.basename(output_wav)}")
+    print(f"  Duration   : {dec_stats['duration_s']:.2f}s")
+    print(f"  Integrity  : {dec_stats['integrity_pct']:.2f}%")
+    print(f"  Peak       : {dec_stats['peak']:.6f}")
+    print("=" * 64)
+    print()
+
+    return {
+        "encode":        enc_stats,
+        "decode":        dec_stats,
+        "vtxt_path":     vtxt_path,
+        "output_wav":    output_wav,
+        "duration_s":    dec_stats["duration_s"],
+        "integrity_pct": dec_stats["integrity_pct"],
+        "peak":          dec_stats["peak"],
+        "rms":           dec_stats["rms"],
+    }

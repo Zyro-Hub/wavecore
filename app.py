@@ -14,7 +14,10 @@ Modes:
       real-time while you speak. File grows on disk live.
       Press ENTER to stop early.
 
-Pipeline (both modes):
+  [3] FILE MODE   — Convert an existing audio file (WAV/FLAC/OGG)
+      to .vtxt without any microphone. Then decode + play back.
+
+Pipeline (all modes):
   Microphone
       |
       v  record / live_record
@@ -68,37 +71,80 @@ def file_summary(label: str, path: str):
 
 
 def pick_mode() -> int:
-    """Display mode menu and return 1 (Normal) or 2 (Live)."""
+    """Display mode menu and return 1 (Normal), 2 (Live), or 3 (File)."""
     print()
     print("################################################################")
-    print("  VOICE EXPERIMENT 1  —  Select Recording Mode")
+    print("  VOICE EXPERIMENT 1  —  Select Mode")
     print(f"  wavcore v{wavcore.__version__}  |  {wavcore.engine_info()}")
     print("################################################################")
     print()
     print("  ┌────────────────────────────────────────────────────────┐")
     print("  │  [1]  NORMAL MODE                                      │")
-    print("  │       Record full audio, then encode all at once.      │")
-    print("  │       (batch C processing — existing behaviour)        │")
+    print("  │       Record mic audio, encode all at once to .vtxt.   │")
+    print("  │       (batch C processing — fixed duration)            │")
     print("  │                                                        │")
     print("  │  [2]  LIVE MODE                                        │")
-    print("  │       Each frame is encoded + written to .vtxt         │")
-    print("  │       in real-time as you speak.                       │")
-    print("  │       File grows on disk while recording.              │")
-    print("  │       Press ENTER at any time to stop early.           │")
+    print("  │       Each frame encoded + written to .vtxt live       │")
+    print("  │       while you speak. Press ENTER to stop early.      │")
+    print("  │                                                        │")
+    print("  │  [3]  FILE MODE                                        │")
+    print("  │       Convert an existing audio file (WAV/FLAC/OGG)    │")
+    print("  │       to .vtxt — no microphone needed.                 │")
     print("  └────────────────────────────────────────────────────────┘")
     print()
 
     while True:
-        choice = input("  Enter 1 or 2: ").strip()
-        if choice in ("1", "2"):
+        choice = input("  Enter 1, 2 or 3: ").strip()
+        if choice in ("1", "2", "3"):
             return int(choice)
-        print("  [!] Please enter 1 or 2.")
+        print("  [!] Please enter 1, 2 or 3.")
 
 
 def main():
     mode = pick_mode()
 
-    if mode == 1:
+    if mode == 3:
+        # ── FILE MODE ────────────────────────────────────────
+        print()
+        print("################################################################")
+        print("  FILE MODE")
+        print("  Convert an existing audio file → .vtxt → decode → play")
+        print("################################################################")
+        print()
+        print("  Supported formats:")
+        print("    WAV  — built-in, no extra install")
+        print("    FLAC, OGG, AIFF, MP3*  — requires: pip install soundfile")
+        print("    (*MP3 may also need libsndfile with mp3 support)")
+        print()
+
+        while True:
+            audio_in = input("  Path to audio file: ").strip().strip('"').strip("'")
+            if os.path.isfile(audio_in):
+                break
+            print(f"  [!] File not found: {audio_in}")
+            print("      Try again or drag-and-drop the file into this window.")
+
+        print()
+        print("  Output files:")
+        print(f"    -> voice_data.vtxt        (encoded from file)")
+        print(f"    -> reconstructed.wav      (decoded from .vtxt)")
+        print()
+        input("  Press ENTER to start ...  ")
+
+        t0 = time.time()
+
+        banner("STEP 1 / 2  —  Audio file → .vtxt  [FILE MODE]")
+        from recorder_converter import file_to_vtxt
+        rec_stats = file_to_vtxt(
+            audio_path  = audio_in,
+            vtxt_path   = VTXT_FILE,
+            sample_rate = SAMPLE_RATE,
+            frame_ms    = FRAME_MS,
+        )
+        # file_to_vtxt has no orig_wav — set a compatible key
+        rec_stats.setdefault("orig_wav_path", audio_in)
+
+    elif mode == 1:
         # ── NORMAL MODE ──────────────────────────────────────
         print()
         print("################################################################")
@@ -160,7 +206,7 @@ def main():
             frame_ms         = FRAME_MS,
         )
 
-    # ── STEP 2: .vtxt → WAV + playback (same for both modes) ─
+    # ── STEP 2: .vtxt → WAV + playback (all modes) ──────────
     banner("STEP 2 / 2  —  Decode .vtxt → WAV + playback")
     conv_stats = wavcore.decode(
         vtxt_path  = VTXT_FILE,
@@ -170,12 +216,13 @@ def main():
 
     # ── FINAL REPORT ─────────────────────────────────────────
     elapsed = time.time() - t0
-    mode_label = "NORMAL" if mode == 1 else "LIVE"
+    mode_label = {1: "NORMAL", 2: "LIVE", 3: "FILE"}.get(mode, "?")
 
     banner(f"EXPERIMENT 1  COMPLETE  [{mode_label} MODE]")
     print()
     print("  PIPELINE SUMMARY")
-    print(f"  |- Mode              : {'Normal (batch)' if mode == 1 else 'Live (real-time write)'}")
+    mode_desc = {1: "Normal (batch)", 2: "Live (real-time write)", 3: "File (no mic)"}
+    print(f"  |- Mode              : {mode_desc.get(mode, '?')}")
     print(f"  |- wavcore engine    : {wavcore.engine_info()}")
     print(f"  |- Total time        : {elapsed:.1f} s  (incl. recording + playback)")
     print(f"  |- Codec pipeline    : {conv_stats['total_ms']:.1f} ms")
@@ -187,7 +234,10 @@ def main():
     print(f"  |- Peak amplitude    : {conv_stats['peak']:.6f}")
     print()
     print("  OUTPUT FILES")
-    file_summary("[1] Original WAV  ->", ORIG_WAV)
+    if mode == 3:
+        print(f"  [1] Source audio     : {rec_stats.get('source_file', audio_in)}")
+    else:
+        file_summary("[1] Original WAV  ->", ORIG_WAV)
     print()
     file_summary("[2] voice_data.vtxt ->", VTXT_FILE)
     print()

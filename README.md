@@ -14,7 +14,9 @@ PyPI: https://pypi.org/project/wavcore/
 
 - **Live Mode** (`wavcore.live_record`) — encodes and writes each frame to `.vtxt` in real-time while you speak. The file grows on disk live. Press ENTER to stop.
 - **Normal Mode** (`wavcore.record`) — records full audio first, then encodes all at once (existing batch behaviour).
-- `app.py` now shows a mode selection menu on startup.
+- **File Mode** (`file_to_vtxt`) — convert **any existing audio file** (WAV, FLAC, OGG, MP3…) to `.vtxt` **without a microphone**.
+- **Direct Convert** (`convert_audio`) — convert any audio file straight to WAV in **one call** — no microphone, no manual vtxt step.
+- `app.py` now shows a 3-option mode selection menu on startup.
 
 ---
 
@@ -39,6 +41,8 @@ That means you can:
 | **C engine** | `cffi`-compiled .pyd — 1326× faster than real-time |
 | **Live mode** | Writes `.vtxt` frame-by-frame while speaking |
 | **Normal mode** | Batch encode after full capture |
+| **File mode** | Convert existing audio file → `.vtxt` — no mic needed |
+| **Direct convert** | `convert_audio()` — audio file → WAV in one call |
 | **CRC-32** | Per-frame integrity check |
 | **Gap handling** | Missing frames → silence during decode |
 | **Pure-Python fallback** | Works without native build |
@@ -49,7 +53,7 @@ That means you can:
 ## Installation
 
 ```bash
-pip install wavcore
+pip install wavcore==2.0.0 .
 ```
 
 Auto-installs: `numpy`, `sounddevice`, `cffi`
@@ -58,7 +62,7 @@ The C engine is compiled during install. No extra steps.
 ### Development (editable) Install
 
 ```bash
-pip install wavecore==2.0.0 .
+pip install -e .
 ```
 
 ### Verify
@@ -75,12 +79,19 @@ print(wavcore.engine_info())  # C engine [cffi / MSVC 64-bit .pyd]  — ultra-fa
 
 ```python
 import wavcore
+from recorder_converter import file_to_vtxt, convert_audio
 
-# Normal mode — record 10s, then encode
+# Normal mode — record 10s from mic, then encode
 wavcore.record("audio.vtxt", "original.wav", duration=10)
 
 # Live mode — write frames to .vtxt in real-time while speaking
 wavcore.live_record("audio.vtxt", "original.wav", max_duration=60)
+
+# File mode — convert an existing audio file to .vtxt (no mic)
+file_to_vtxt("my_song.wav", "audio.vtxt")
+
+# Direct convert — audio file → WAV in ONE call (no mic, no manual steps)
+convert_audio("my_song.wav", "output.wav", play=True)
 
 # Convert any .vtxt file → WAV (+ optional playback)
 wavcore.decode("audio.vtxt", "reconstructed.wav", play=True)
@@ -98,13 +109,23 @@ python app.py
 ```
 
 ```
-  [1]  NORMAL MODE   — record full audio, then encode (batch)
-  [2]  LIVE MODE     — encode each frame live while speaking
+  ┌────────────────────────────────────────────────────────┐
+  │  [1]  NORMAL MODE                                      │
+  │       Record mic audio, encode all at once to .vtxt.   │
+  │                                                        │
+  │  [2]  LIVE MODE                                        │
+  │       Each frame encoded + written to .vtxt live       │
+  │       while you speak. Press ENTER to stop early.      │
+  │                                                        │
+  │  [3]  FILE MODE                                        │
+  │       Convert an existing audio file (WAV/FLAC/OGG)    │
+  │       to .vtxt — no microphone needed.                 │
+  └────────────────────────────────────────────────────────┘
 
-  Enter 1 or 2:
+  Enter 1, 2 or 3:
 ```
 
-Both modes produce identical output files and feed into the same decode + playback step.
+All three modes produce a `.vtxt` file compatible with the same decode + playback step.
 
 ---
 
@@ -114,9 +135,11 @@ Both modes produce identical output files and feed into the same decode + playba
 
 | Function | Mode | Description |
 |---|---|---|
-| `wavcore.record()` | Normal | Record full audio, encode to `.vtxt` in one batch |
+| `wavcore.record()` | Normal | Record full audio from mic, encode to `.vtxt` |
 | `wavcore.live_record()` | **Live** | Encode + write each frame live while speaking |
-| `wavcore.decode()` | Decode | Convert any `.vtxt` → WAV + optional playback |
+| `file_to_vtxt()` | **File** | Existing audio file → `.vtxt` (no mic needed) |
+| `convert_audio()` | **Direct** | Audio file → WAV in one call (no mic, no manual vtxt) |
+| `wavcore.decode()` | Decode | Any `.vtxt` → WAV + optional playback |
 | `wavcore.engine_info()` | Info | Show active C engine tier |
 | `wavcore.batch_encode()` | Low-level | `float32` array → list of hex strings |
 | `wavcore.batch_decode()` | Low-level | List of hex strings → `float32` array |
@@ -227,6 +250,177 @@ print(f"File     : {stats['vtxt_size']:,} bytes")
   [LIVE] Frame     47  |  0.9s  |  45.2 KB
 ```
 You can open `live_voice.vtxt` in a text editor while recording — frames appear in real-time.
+
+---
+
+### `file_to_vtxt()` — **NEW in 2.0.0**
+
+Convert **any existing audio file** to `.vtxt` using the C engine — **no microphone required**.
+
+This is the function to use when you already have an audio file and want to encode it into the VTXT format.
+
+```python
+from recorder_converter import file_to_vtxt
+
+stats = file_to_vtxt(
+    audio_path  = "song.wav",       # required — input audio file
+    vtxt_path   = "song.vtxt",      # required — output .vtxt path
+    sample_rate = 48_000,           # optional — target Hz    (default 48000)
+    frame_ms    = 20,               # optional — frame size   (default 20ms)
+)
+```
+
+**Supported input formats:**
+
+| Format | Requirement |
+|---|---|
+| `.wav` | Built-in — no extra install |
+| `.flac` `.ogg` `.aiff` | `pip install soundfile` |
+| `.mp3` | `pip install soundfile` + libsndfile with MP3 support |
+
+**Pipeline:**
+```
+audio file → read → mono mix → resample if needed
+          → C batch_encode() → C CRC-32 per frame → write .vtxt
+```
+
+**Returns:**
+
+```python
+{
+    "frames":       500,              # frames written
+    "duration_ms":  10000.0,          # ms
+    "sample_rate":  48000,
+    "channels":     1,
+    "peak":         0.724518,         # 0.0–1.0
+    "rms":          0.182350,
+    "vtxt_path":    "song.vtxt",
+    "source_file":  "/path/to/song.wav",  # absolute path of input
+    "created_unix": 1745123456,
+    "vtxt_size":    3942506,          # bytes
+    "encode_ms":    42.1,
+}
+```
+
+**Examples:**
+
+```python
+from recorder_converter import file_to_vtxt
+import wavcore
+
+# ── WAV file → .vtxt → decode + play ──────────────────────
+file_to_vtxt("recording.wav", "recording.vtxt")
+wavcore.decode("recording.vtxt", "output.wav", play=True)
+
+# ── FLAC file (needs: pip install soundfile) ───────────────
+file_to_vtxt("vocals.flac", "vocals.vtxt", sample_rate=44_100)
+wavcore.decode("vocals.vtxt", "vocals_recon.wav", play=False)
+
+# ── Check stats ────────────────────────────────────────────
+stats = file_to_vtxt("interview.wav", "interview.vtxt")
+print(f"Encoded {stats['frames']} frames ({stats['duration_ms']/1000:.1f}s)")
+print(f"File size: {stats['vtxt_size']:,} bytes")
+print(f"Took: {stats['encode_ms']:.1f} ms")
+```
+
+**How it handles different sample rates:**
+
+If the source file has a different sample rate than `sample_rate`, the audio is resampled automatically:
+- Uses `scipy.signal.resample_poly` if scipy is installed (high quality)
+- Falls back to numpy linear interpolation if not
+
+```python
+# Source WAV is 44100 Hz, target is 48000 Hz — resampled automatically
+file_to_vtxt("cd_audio.wav", "cd_audio.vtxt", sample_rate=48_000)
+```
+
+**Note:** The `.vtxt` produced by `file_to_vtxt()` is fully compatible with `wavcore.decode()`. The header will contain `SOURCE_FILE` and `RECORD_MODE=FILE` fields.
+
+---
+
+### `convert_audio()` — Direct Audio Conversion
+
+The **simplest way** to convert any audio file to WAV using the WavCore pipeline. One function call — no microphone, no manual steps.
+
+Internally it calls `file_to_vtxt()` then `vtxt_to_wav()` and optionally deletes the intermediate `.vtxt`.
+
+```python
+from recorder_converter import convert_audio
+
+stats = convert_audio(
+    audio_path  = "song.wav",        # required — input audio file
+    output_wav  = "output.wav",      # required — output WAV path
+    sample_rate = 48_000,            # optional — target Hz      (default 48000)
+    frame_ms    = 20,                # optional — frame size ms  (default 20)
+    play        = False,             # optional — play after done (default False)
+    keep_vtxt   = False,             # optional — keep .vtxt?    (default False)
+    vtxt_path   = None,              # optional — custom .vtxt path (auto if None)
+)
+```
+
+**Pipeline:**
+```
+audio_path  →  file_to_vtxt()  →  temp_vtxt
+            →  vtxt_to_wav()   →  output_wav
+            →  (delete temp_vtxt if keep_vtxt=False)
+```
+
+**Returns:**
+
+```python
+{
+    "encode":        { ...file_to_vtxt stats... },
+    "decode":        { ...vtxt_to_wav stats... },
+    "vtxt_path":     "output_temp.vtxt",   # intermediate vtxt (deleted if keep_vtxt=False)
+    "output_wav":    "output.wav",
+    "duration_s":    10.0,
+    "integrity_pct": 100.0,
+    "peak":          0.724518,
+    "rms":           0.182350,
+}
+```
+
+**Examples:**
+
+```python
+from recorder_converter import convert_audio
+
+# ── Simplest use — WAV in, WAV out ────────────────────────────
+convert_audio("recording.wav", "output.wav")
+
+# ── Play the result immediately ───────────────────────────────
+convert_audio("interview.wav", "interview_clean.wav", play=True)
+
+# ── Keep the .vtxt too (for inspection or re-use) ─────────────
+stats = convert_audio(
+    audio_path = "song.flac",          # FLAC needs: pip install soundfile
+    output_wav = "song_out.wav",
+    keep_vtxt  = True,
+    vtxt_path  = "song_encoded.vtxt",  # save .vtxt here
+)
+print(f"Duration : {stats['duration_s']:.1f}s")
+print(f"Integrity: {stats['integrity_pct']:.2f}%")
+
+# ── Check encode + decode stats separately ────────────────────
+print(f"Frames encoded : {stats['encode']['frames']}")
+print(f"Frames valid   : {stats['decode']['ok_frames']}")
+print(f"Total encode   : {stats['encode']['encode_ms']:.1f} ms")
+print(f"Total decode   : {stats['decode']['total_ms']:.1f} ms")
+```
+
+**Comparison — two ways to do the same thing:**
+
+```python
+# ❌ Manual (3 steps)
+from recorder_converter import file_to_vtxt, vtxt_to_wav
+file_to_vtxt("song.wav", "song.vtxt")
+vtxt_to_wav("song.vtxt", "output.wav", play_audio=True)
+import os; os.remove("song.vtxt")
+
+# ✅ Direct (1 step)
+from recorder_converter import convert_audio
+convert_audio("song.wav", "output.wav", play=True)
+```
 
 ---
 
@@ -424,7 +618,16 @@ print(f"CRC-32: {crc:08X}")   # e.g.  BC5C582D
                     └─────────────────────────────┘
 
                     ┌─────────────────────────────┐
-                    │      DECODE (both modes)     │
+                    │      FILE MODE  ← NEW        │
+  Audio File ──────>│  read (wave / soundfile)     │
+  (WAV/FLAC/OGG)    │  mono mix + resample         │
+                    │  C batch_encode()            │
+                    │  C compute_frame_crc() ×N    │
+                    │  write .vtxt (all at once)   │
+                    └─────────────────────────────┘
+
+                    ┌─────────────────────────────┐
+                    │      DECODE (all modes)      │
   .vtxt ───────────>│  parse [FRAME] blocks        │
                     │  C batch_decode()            │
                     │  C CRC-32 verify             │
@@ -471,6 +674,7 @@ SAMPLES_HEX=3C8B43963D0A12F4...
 ```
 
 Live mode files also include `RECORD_MODE=LIVE` in the header.
+File mode files include `RECORD_MODE=FILE` and `SOURCE_FILE=<filename>` in the header.
 
 ---
 
@@ -659,13 +863,14 @@ print(f"Decode: {dec['total_ms']:.1f} ms")
 
 ## Configuration Reference
 
-| Parameter | Default | Range | Notes |
+| Parameter | Default | Range | Applies to |
 |---|---|---|---|
 | `duration` | `10` | 1–3600 s | `record()` only — fixed length |
 | `max_duration` | `60` | 1–3600 s | `live_record()` only — press ENTER to stop early |
-| `sample_rate` | `48000` | 8000–192000 | Higher = better quality, larger file |
-| `frame_ms` | `20` | 10–100 | Smaller = lower latency |
-| `play` | `True` | True/False | Set `False` on servers without audio output |
+| `audio_path` | — | any path | `file_to_vtxt()` only — input audio file |
+| `sample_rate` | `48000` | 8000–192000 | All modes — higher = better quality, larger file |
+| `frame_ms` | `20` | 10–100 | All modes — smaller = lower latency |
+| `play` | `True` | True/False | `decode()` only — set `False` on servers |
 
 ### Sample Rate vs File Size (10 seconds)
 
@@ -683,9 +888,11 @@ print(f"Decode: {dec['total_ms']:.1f} ms")
 
 | File | Created by | Contains |
 |---|---|---|
-| `voice_data.vtxt` | `record()` / `live_record()` | Text-encoded audio frames |
+| `voice_data.vtxt` | `record()` / `live_record()` / `file_to_vtxt()` | Text-encoded audio frames |
 | `original_reference.wav` | `record()` / `live_record()` | Raw mic capture (ground truth) |
 | `reconstructed.wav` | `decode()` | Rebuilt audio from `.vtxt` |
+
+> **File Mode note:** `file_to_vtxt()` does not create an `original_reference.wav` — the source audio file itself is the reference. The `.vtxt` header records the original filename as `SOURCE_FILE`.
 
 ---
 
@@ -724,6 +931,26 @@ For network transmission, add retry logic and re-request specific frames.
 ### Live mode: ENTER key not stopping
 
 This can happen in some terminal environments. Press `Ctrl+C` as an alternative stop signal.
+
+### File mode: format not supported
+
+```bash
+pip install soundfile        # for FLAC, OGG, AIFF
+```
+
+For MP3, soundfile needs libsndfile compiled with MP3 support (platform-dependent).
+Alternatively, convert your MP3 to WAV first using any audio tool, then use `file_to_vtxt`.
+
+### File mode: quality sounds different after decode
+
+If the source file's sample rate (e.g. 44100 Hz) differs from `sample_rate` (default 48000 Hz), the audio is resampled. For best quality, match the sample rate to the source:
+
+```python
+from recorder_converter import file_to_vtxt
+
+# Match source rate (44100 Hz CD audio)
+file_to_vtxt("song.wav", "song.vtxt", sample_rate=44_100)
+```
 
 ---
 

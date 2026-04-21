@@ -485,3 +485,226 @@ def live_record_to_vtxt(
         "vtxt_size":     vtxt_size,
         "encode_ms":     total_ms,
     }
+
+
+def file_to_vtxt(
+    audio_path:  str,
+    vtxt_path:   str,
+    sample_rate: int = 48_000,
+    frame_ms:    int = 20,
+) -> dict:
+    """
+    FILE MODE — Convert an existing audio file to .vtxt WITHOUT a microphone.
+
+    Reads any WAV file (built-in) or any format supported by soundfile
+    (MP3*, FLAC, OGG, AIFF, etc. — requires: pip install soundfile).
+    *MP3 also requires libsndfile with mp3 support.
+
+    Parameters
+    ----------
+    audio_path  : path to input audio file (WAV, FLAC, OGG, etc.)
+    vtxt_path   : path to output .vtxt file
+    sample_rate : target sample rate in Hz (default 48000)
+                  — file is resampled if its native rate differs
+    frame_ms    : frame size in milliseconds (default 20)
+
+    Returns
+    -------
+    dict with keys: frames, duration_ms, sample_rate, channels,
+                    peak, rms, vtxt_path, source_file,
+                    created_unix, vtxt_size, encode_ms
+    """
+    channels  = 1
+    bit_depth = 32
+    spf       = int(sample_rate * frame_ms / 1000)   # samples per frame
+
+    audio_path = os.path.abspath(audio_path)
+    ext        = os.path.splitext(audio_path)[1].lower()
+
+    print("=" * 64)
+    print("  FILE → .vtxt  [C engine]")
+    print(f"  Engine  : {_codec_engine_info()}")
+    print("=" * 64)
+    print(f"  Input file    : {audio_path}")
+    print(f"  Target rate   : {sample_rate:,} Hz")
+    print(f"  Frame size    : {frame_ms} ms  ({spf} samples)")
+    print(f"  Output vtxt   : {vtxt_path}")
+    print("=" * 64)
+    print()
+
+    # ── Read audio ────────────────────────────────────────────
+    print("  Reading audio ...", end=" ", flush=True)
+    t0 = time.perf_counter()
+
+    audio    = None
+    src_rate = sample_rate
+
+    if ext == ".wav":
+        # Built-in WAV reading — no extra dependencies
+        with wave.open(audio_path, "r") as wf:
+            src_rate  = wf.getframerate()
+            src_ch    = wf.getnchannels()
+            src_width = wf.getsampwidth()
+            n_samp    = wf.getnframes()
+            raw_bytes = wf.readframes(n_samp)
+
+        dtype_map = {1: np.int8, 2: np.int16, 3: np.int32, 4: np.int32}
+        raw = np.frombuffer(raw_bytes, dtype=dtype_map.get(src_width, np.int16))
+
+        # Normalize to float32 [-1, 1]
+        max_val = float(2 ** (src_width * 8 - 1))
+        audio   = raw.astype(np.float32) / max_val
+
+        # Mix down to mono if stereo
+        if src_ch > 1:
+            audio = audio.reshape(-1, src_ch).mean(axis=1)
+    else:
+        # Try soundfile for other formats (FLAC, OGG, AIFF, MP3, …)
+        try:
+            import soundfile as sf
+        except ImportError:
+            raise ImportError(
+                f"Cannot read '{ext}' files without soundfile.\n"
+                "Install it:  pip install soundfile\n"
+                "(For MP3 you may also need:  pip install soundfile[extra])"
+            )
+        audio, src_rate = sf.read(audio_path, dtype="float32", always_2d=True)
+        audio = audio.mean(axis=1)   # mono mix
+
+    print(f"{(time.perf_counter()-t0)*1000:.1f} ms")
+    print(f"  Source rate   : {src_rate:,} Hz  |  "
+          f"Samples: {len(audio):,}")
+
+    # ── Resample if needed ────────────────────────────────────
+    if src_rate != sample_rate:
+        print(f"  Resampling {src_rate:,} → {sample_rate:,} Hz ...", end=" ", flush=True)
+        t0 = time.perf_counter()
+        try:
+            import scipy.signal as sig
+            audio = sig.resample_poly(
+                audio,
+                sample_rate,
+                src_rate,
+            ).astype(np.float32)
+        except ImportError:
+            # Fall back to numpy linear interpolation
+            old_len = len(audio)
+            new_len = int(old_len * sample_rate / src_rate)
+            audio   = np.interp(
+                np.linspace(0, old_len, new_len),
+                np.arange(old_len),
+                audio,
+            ).astype(np.float32)
+        print(f"{(time.perf_counter()-t0)*1000:.1f} ms  → {len(audio):,} samples")
+
+    # ── Signal stats ─────────────────────────────────────────
+    peak = float(np.max(np.abs(audio)))
+    rms  = float(np.sqrt(np.mean(audio ** 2)))
+    print(f"  Peak={peak:.6f}   RMS={rms:.6f}")
+    if peak < 0.001:
+        print("  [WARN] Very quiet file — check the source audio.")
+    print()
+
+    # ── Pad to exact multiple of spf ─────────────────────────
+    remainder = len(audio) % spf
+    if remainder:
+        audio = np.append(audio, np.zeros(spf - remainder, dtype=np.float32))
+    n_frames = len(audio) // spf
+
+    # ── C batch encode ────────────────────────────────────────
+    print(f"  Encoding {n_frames} frames (C batch) ...", end=" ", flush=True)
+    t0       = time.perf_counter()
+    hex_list = batch_encode(audio.astype(np.float32), spf)
+    t_encode = (time.perf_counter() - t0) * 1000
+    print(f"{t_encode:.1f} ms  ({t_encode/n_frames*1000:.1f} µs/frame)")
+
+    # ── C CRC per frame ───────────────────────────────────────
+    print(f"  CRC-32 (C engine) ...", end=" ", flush=True)
+    t0         = time.perf_counter()
+    created_unix = int(time.time())
+    start_ms   = created_unix * 1000.0
+    frame_crcs = []
+    payloads   = []
+    for i in range(n_frames):
+        chunk   = audio[i * spf: (i + 1) * spf]
+        payload = chunk.astype(np.float32).tobytes()
+        ts_ms   = start_ms + i * frame_ms
+        crc     = compute_frame_crc(
+            _FRAME_VER, i, ts_ms, sample_rate, channels, bit_depth, payload
+        )
+        frame_crcs.append(f"{crc:08X}")
+        payloads.append((i, ts_ms, len(payload)))
+    t_crc = (time.perf_counter() - t0) * 1000
+    print(f"{t_crc:.1f} ms")
+
+    # ── Write .vtxt ───────────────────────────────────────────
+    print(f"  Writing .vtxt ...", end=" ", flush=True)
+    now_utc     = datetime.datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S UTC")
+    duration_ms = n_frames * frame_ms
+
+    t0 = time.perf_counter()
+    with open(vtxt_path, "w", encoding="utf-8") as f:
+        f.write("# ================================================================\n")
+        f.write("# VDAT TEXT CODEC  v1  (file_to_vtxt)\n")
+        f.write(f"# Source  : {os.path.basename(audio_path)}\n")
+        f.write(f"# Created : {now_utc}\n")
+        f.write(f"# Engine  : {_codec_engine_info()}\n")
+        f.write("# SAMPLES_HEX = raw IEEE-754 float32 bytes, uppercase hex\n")
+        f.write("# Lossless: no floating-point rounding ever occurs\n")
+        f.write("# RECORD_MODE=FILE\n")
+        f.write("# ================================================================\n\n")
+
+        f.write("[FILE_HEADER]\n")
+        f.write(f"CODEC_VERSION={_CODEC_VER}\n")
+        f.write(f"FILE_VERSION={_FILE_VER}\n")
+        f.write(f"TOTAL_FRAMES={n_frames}\n")
+        f.write(f"SAMPLE_RATE={sample_rate}\n")
+        f.write(f"CHANNELS={channels}\n")
+        f.write(f"BIT_DEPTH={bit_depth}\n")
+        f.write(f"FRAME_MS={frame_ms}\n")
+        f.write(f"DURATION_MS={duration_ms:.6f}\n")
+        f.write(f"CREATED_UNIX={created_unix}\n")
+        f.write(f"CREATED_UTC={now_utc}\n")
+        f.write(f"SOURCE_FILE={os.path.basename(audio_path)}\n")
+        f.write("RECORD_MODE=FILE\n")
+        f.write("[/FILE_HEADER]\n\n")
+
+        for i, (fid, ts_ms, plen) in enumerate(payloads):
+            f.write("[FRAME]\n")
+            f.write(f"FRAME_ID={fid}\n")
+            f.write(f"FRAME_VERSION={_FRAME_VER}\n")
+            f.write(f"TIMESTAMP_MS={ts_ms:.6f}\n")
+            f.write(f"SAMPLE_RATE={sample_rate}\n")
+            f.write(f"CHANNELS={channels}\n")
+            f.write(f"BIT_DEPTH={bit_depth}\n")
+            f.write(f"PAYLOAD_LEN={plen}\n")
+            f.write(f"SAMPLES_COUNT={plen // 4}\n")
+            f.write(f"ORIG_CRC32={frame_crcs[i]}\n")
+            f.write(f"SAMPLES_HEX={hex_list[i]}\n")
+            f.write("[/FRAME]\n\n")
+
+    t_write   = (time.perf_counter() - t0) * 1000
+    vtxt_size = os.path.getsize(vtxt_path)
+    total_ms  = t_encode + t_crc + t_write
+
+    print(f"{t_write:.1f} ms")
+    print()
+    print(f"  [OK] Source       : {os.path.basename(audio_path)}")
+    print(f"  [OK] Frames       : {n_frames}  ({duration_ms/1000:.2f}s)")
+    print(f"  [OK] vtxt         : {vtxt_size:,} bytes  ({vtxt_size/1024:.1f} KB)")
+    print(f"  [OK] Total encode : {total_ms:.1f} ms  ({total_ms/n_frames*1000:.1f} µs/frame)")
+    print()
+
+    return {
+        "frames":       n_frames,
+        "duration_ms":  duration_ms,
+        "sample_rate":  sample_rate,
+        "channels":     channels,
+        "peak":         peak,
+        "rms":          rms,
+        "vtxt_path":    vtxt_path,
+        "source_file":  audio_path,
+        "created_unix": created_unix,
+        "vtxt_size":    vtxt_size,
+        "encode_ms":    total_ms,
+    }

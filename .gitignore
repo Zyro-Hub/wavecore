@@ -1,5 +1,6 @@
 # Build artifacts
 build/
+test/
 *.egg-info/
 __pycache__/
 *.pyc
